@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EPUB Reader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #fafafa;
+            --text-primary: #333333;
+            --text-secondary: #666666;
+            --text-light: #999999;
+            --accent: #4a90d9;
+            --border: #e8e8e8;
+            --shadow: rgba(0,0,0,0.08);
+            --toolbar-height: 52px;
+            --content-max-width: 800px;
+            --content-padding: 48px;
+            --font-size-base: 18px;
+        }
+        body.dark {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #252525;
+            --bg-tertiary: #2a2a2a;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --text-light: #707070;
+            --accent: #5da0f0;
+            --border: #3a3a3a;
+            --shadow: rgba(0,0,0,0.3);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: background 0.3s, color 0.3s;
+        }
+        .toolbar {
+            height: var(--toolbar-height);
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            flex-shrink: 0;
+            z-index: 100;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .toolbar-left, .toolbar-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .toolbar-btn {
+            width: 36px;
+            height: 36px;
+            border: none;
+            background: transparent;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+        .toolbar-btn:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+        .toolbar-btn svg { width: 20px; height: 20px; }
+        .book-title {
+            font-size: 15px;
+            font-weight: 500;
+            color: var(--text-primary);
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .welcome {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            background: var(--bg-primary);
+        }
+        .welcome.hidden { display: none; }
+        .welcome-logo {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, var(--accent), #6ab0f3);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(74, 144, 217, 0.3);
+        }
+        .welcome-logo svg { width: 48px; height: 48px; color: white; }
+        .welcome h1 {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+        }
+        .welcome p {
+            font-size: 15px;
+            color: var(--text-secondary);
+            margin-bottom: 40px;
+            max-width: 360px;
+            text-align: center;
+            line-height: 1.7;
+        }
+        .welcome-actions { display: flex; gap: 16px; }
+        .welcome-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .welcome-btn.primary {
+            background: var(--accent);
+            color: white;
+        }
+        .welcome-btn.primary:hover {
+            background: #3a80c9;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(74, 144, 217, 0.4);
+        }
+        .welcome-btn.secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        .welcome-btn.secondary:hover { background: var(--bg-tertiary); }
+        .welcome-btn svg { width: 20px; height: 20px; }
+        .reader {
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .reader.active { display: flex; }
+        .reader-main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        .sidebar {
+            width: 300px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            transition: all 0.3s ease;
+            z-index: 50;
+        }
+        .sidebar.hidden {
+            width: 0;
+            border-right: none;
+            overflow: hidden;
+        }
+        .sidebar-header {
+            padding: 16px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+        .toc-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+            list-style: none;
+        }
+        .toc-item {
+            padding: 12px 20px;
+            font-size: 14px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s;
+            border-left: 3px solid transparent;
+        }
+        .toc-item:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+        .toc-item.active {
+            background: rgba(74, 144, 217, 0.1);
+            color: var(--accent);
+            border-left-color: var(--accent);
+        }
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            background: var(--bg-primary);
+            position: relative;
+        }
+        .content-wrapper {
+            max-width: var(--content-max-width);
+            margin: 0 auto;
+            padding: var(--content-padding);
+            background: var(--bg-secondary);
+            min-height: 100%;
+            box-shadow: 0 0 40px var(--shadow);
+        }
+        .content {
+            line-height: 1.9;
+            font-size: var(--font-size-base);
+        }
+        .content h1 { font-size: 1.8em; margin: 1.2em 0 0.8em; }
+        .content h2 { font-size: 1.4em; margin: 1.2em 0 0.6em; }
+        .content h3 { font-size: 1.2em; margin: 1em 0 0.5em; }
+        .content h1, .content h2, .content h3 { color: var(--text-primary); font-weight: 600; }
+        .content p { margin-bottom: 1em; }
+        .content img { max-width: 100%; height: auto; display: block; margin: 1.5em auto; border-radius: 8px; }
+        .content a { color: var(--accent); text-decoration: none; }
+        .content a:hover { text-decoration: underline; }
+        .content blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 12px 20px;
+            margin: 1.5em 0;
+            background: var(--bg-tertiary);
+            border-radius: 0 8px 8px 0;
+            font-style: italic;
+        }
+        .content ul, .content ol { margin: 1em 0; padding-left: 24px; }
+        .content li { margin-bottom: 0.5em; }
+        .content pre {
+            background: var(--bg-tertiary);
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1.5em 0;
+        }
+        .content code {
+            font-family: "SF Mono", Monaco, Consolas, monospace;
+            font-size: 0.9em;
+        }
+        .progress-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--border);
+            z-index: 100;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.2s;
+        }
+        .settings-panel {
+            position: fixed;
+            top: var(--toolbar-height);
+            right: 0;
+            width: 320px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px var(--shadow);
+            padding: 20px;
+            z-index: 200;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: all 0.2s;
+        }
+        .settings-panel.active {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+        .settings-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+        }
+        .settings-group { margin-bottom: 24px; }
+        .settings-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .settings-label span { color: var(--accent); }
+        .settings-row { display: flex; align-items: center; gap: 12px; }
+        .font-size-btn {
+            width: 36px;
+            height: 36px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            font-size: 18px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .font-size-btn:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--accent);
+        }
+        .theme-btn {
+            width: 32px;
+            height: 32px;
+            border: 2px solid var(--border);
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .theme-btn:hover { transform: scale(1.1); }
+        .theme-btn.active { border-color: var(--accent); }
+        .theme-btn.light { background: #ffffff; }
+        .theme-btn.sepia { background: #f4ecd8; }
+        .theme-btn.dark { background: #1a1a1a; }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal {
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            padding: 24px;
+            width: 90%;
+            max-width: 420px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        .modal h3 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+        .modal input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            font-size: 15px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            margin-bottom: 16px;
+        }
+        .modal input:focus { outline: none; border-color: var(--accent); }
+        .modal-actions { display: flex; gap: 12px; justify-content: flex-end; }
+        .modal-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .modal-btn.cancel { background: var(--bg-tertiary); color: var(--text-secondary); }
+        .modal-btn.confirm { background: var(--accent); color: white; }
+        .modal-btn:hover { opacity: 0.9; }
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+        .loading.active { opacity: 1; visibility: visible; }
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .loading p { margin-top: 16px; font-size: 14px; color: var(--text-secondary); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .hidden-input { display: none; }
+        @media (max-width: 768px) {
+            :root {
+                --content-padding: 24px;
+                --font-size-base: 16px;
+            }
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--toolbar-height);
+                bottom: 0;
+                transform: translateX(-100%);
+            }
+            .sidebar.visible { transform: translateX(0); }
+            .settings-panel { width: 100%; max-width: 320px; right: -10px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <button class="toolbar-btn" id="menuBtn" title="目录">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="6" x2="21" y2="6"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                    <line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+            </button>
+            <span class="book-title" id="bookTitle">EPUB Reader</span>
+        </div>
+        <div class="toolbar-right">
+            <button class="toolbar-btn" id="settingsBtn" title="设置">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+            </button>
+            <button class="toolbar-btn" id="openFileBtn" title="打开文件">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- 欢迎页 -->
+    <div class="welcome" id="welcome">
+        <div class="welcome-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                <line x1="8" y1="6" x2="16" y2="6"/>
+                <line x1="8" y1="10" x2="16" y2="10"/>
+                <line x1="8" y1="14" x2="12" y2="14"/>
+            </svg>
+        </div>
+        <h1>欢迎使用 EPUB 阅读器</h1>
+        <p>简洁优雅的阅读体验，支持本地文件和在线链接，随时随地享受阅读。</p>
+        <div class="welcome-actions">
+            <button class="welcome-btn primary" id="welcomeLocalBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                打开本地文件
+            </button>
+            <button class="welcome-btn secondary" id="welcomeUrlBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                </svg>
+                打开在线链接
+            </button>
+        </div>
+    </div>
+
+    <!-- 阅读器 -->
+    <div class="reader" id="reader">
+        <div class="reader-main">
+            <aside class="sidebar hidden" id="sidebar">
+                <div class="sidebar-header">目录</div>
+                <ul class="toc-list" id="tocList"></ul>
+            </aside>
+            <div class="content-area" id="contentArea">
+                <div class="content-wrapper">
+                    <div class="content" id="content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 进度条 -->
+    <div class="progress-bar">
+        <div class="progress-bar-fill" id="progressBar"></div>
+    </div>
+
+    <!-- 设置面板 -->
+    <div class="settings-panel" id="settingsPanel">
+        <div class="settings-title">阅读设置</div>
+        <div class="settings-group">
+            <div class="settings-label">字体大小 <span id="fontSizeValue">18px</span></div>
+            <div class="settings-row">
+                <button class="font-size-btn" id="fontSizeDown">A-</button>
+                <button class="font-size-btn" id="fontSizeUp">A+</button>
+            </div>
+        </div>
+        <div class="settings-group">
+            <div class="settings-label">主题</div>
+            <div class="settings-row">
+                <button class="theme-btn light active" data-theme="light" title="白天"></button>
+                <button class="theme-btn sepia" data-theme="sepia" title="护眼"></button>
+                <button class="theme-btn dark" data-theme="dark" title="夜间"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 弹窗 -->
+    <div class="modal-overlay" id="urlModal">
+        <div class="modal">
+            <h3>打开在线 EPUB</h3>
+            <input type="url" id="urlInput" placeholder="请输入 EPUB 文件的 URL 地址">
+            <div class="modal-actions">
+                <button class="modal-btn cancel" id="cancelUrlBtn">取消</button>
+                <button class="modal-btn confirm" id="confirmUrlBtn">打开</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载 -->
+    <div class="loading" id="loading">
+        <div class="loading-spinner"></div>
+        <p>正在加载...</p>
+    </div>
+
+    <input type="file" class="hidden-input" id="fileInput" accept=".epub">
+    <script src="jszip.min.js"></script>
+    <script src="epub.min.js"></script>
+    <script>
+class EpubReader {
+    constructor() {
+        this.book = null;
+        this.currentChapter = 0;
+        this.zip = null;
+        this.resourceCache = new Map();
+        this.fontSize = 18;
+        this.isDark = false;
+        this.initElements();
+        this.bindEvents();
+        this.loadSettings();
+    }
+
+    initElements() {
+        this.welcome = document.getElementById('welcome');
+        this.reader = document.getElementById('reader');
+        this.content = document.getElementById('content');
+        this.contentArea = document.getElementById('contentArea');
+        this.tocList = document.getElementById('tocList');
+        this.sidebar = document.getElementById('sidebar');
+        this.bookTitle = document.getElementById('bookTitle');
+        this.progressBar = document.getElementById('progressBar');
+        this.loading = document.getElementById('loading');
+        this.urlModal = document.getElementById('urlModal');
+        this.urlInput = document.getElementById('urlInput');
+        this.fileInput = document.getElementById('fileInput');
+        this.settingsPanel = document.getElementById('settingsPanel');
+    }
+
+    bindEvents() {
+        // 文件选择
+        document.getElementById('openFileBtn').addEventListener('click', () => this.fileInput.click());
+        document.getElementById('welcomeLocalBtn').addEventListener('click', () => this.fileInput.click());
+        this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+
+        // 目录
+        document.getElementById('menuBtn').addEventListener('click', () => this.toggleSidebar());
+
+        // 设置面板
+        document.getElementById('settingsBtn').addEventListener('click', () => this.toggleSettings());
+
+        // 字体大小
+        document.getElementById('fontSizeUp').addEventListener('click', () => this.changeFontSize(2));
+        document.getElementById('fontSizeDown').addEventListener('click', () => this.changeFontSize(-2));
+
+        // 主题
+        document.querySelectorAll('.theme-btn').forEach(btn => {
+            btn.addEventListener('click', () => this.setTheme(btn.dataset.theme));
+        });
+
+        // 在线链接
+        document.getElementById('welcomeUrlBtn').addEventListener('click', () => this.showUrlModal());
+        document.getElementById('cancelUrlBtn').addEventListener('click', () => this.hideUrlModal());
+        document.getElementById('confirmUrlBtn').addEventListener('click', () => this.openUrl());
+        this.urlInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') this.openUrl(); });
+
+        // 滚动更新进度
+        this.contentArea.addEventListener('scroll', () => this.updateProgress());
+
+        // 键盘快捷键
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'PageUp') this.prevPage();
+            if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') this.nextPage();
+        });
+
+        // 点击外部关闭设置面板
+        document.addEventListener('click', (e) => {
+            if (!this.settingsPanel.contains(e.target) && !document.getElementById('settingsBtn').contains(e.target)) {
+                this.settingsPanel.classList.remove('active');
+            }
+        });
+    }
+
+    loadSettings() {
+        const saved = localStorage.getItem('epubReaderSettings');
+        if (saved) {
+            const settings = JSON.parse(saved);
+            this.fontSize = settings.fontSize || 18;
+            this.setFontSize(this.fontSize);
+            this.setTheme(settings.theme || 'light');
+        }
+    }
+
+    saveSettings() {
+        localStorage.setItem('epubReaderSettings', JSON.stringify({
+            fontSize: this.fontSize,
+            theme: this.isDark ? 'dark' : 'light'
+        }));
+    }
+
+    changeFontSize(delta) {
+        this.setFontSize(this.fontSize + delta);
+    }
+
+    setFontSize(size) {
+        this.fontSize = Math.max(14, Math.min(28, size));
+        document.documentElement.style.setProperty('--font-size-base', this.fontSize + 'px');
+        document.getElementById('fontSizeValue').textContent = this.fontSize + 'px';
+        this.saveSettings();
+    }
+
+    setTheme(theme) {
+        document.querySelectorAll('.theme-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.theme === theme);
+        });
+
+        if (theme === 'dark') {
+            document.body.classList.add('dark');
+            this.isDark = true;
+        } else {
+            document.body.classList.remove('dark');
+            this.isDark = false;
+        }
+        this.saveSettings();
+    }
+
+    toggleSettings() {
+        this.settingsPanel.classList.toggle('active');
+    }
+
+    toggleSidebar() {
+        this.sidebar.classList.toggle('hidden');
+        if (window.innerWidth < 768) {
+            this.sidebar.classList.toggle('visible');
+        }
+    }
+
+    showUrlModal() {
+        this.urlModal.classList.add('active');
+        this.urlInput.value = '';
+        this.urlInput.focus();
+    }
+
+    hideUrlModal() {
+        this.urlModal.classList.remove('active');
+    }
+
+    async handleFileSelect(e) {
+        const file = e.target.files[0];
+        if (file) await this.loadEpub(file);
+    }
+
+    async openUrl() {
+        const url = this.urlInput.value.trim();
+        if (!url) return;
+        this.hideUrlModal();
+        this.showLoading('正在下载...');
+        try {
+            await this.loadEpubUrl(url);
+        } catch (error) {
+            alert('无法加载文件: ' + error.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    async loadEpub(file) {
+        if (this.book) this.book.destroy();
+        this.showLoading('正在解析...');
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            this.zip = await JSZip.loadAsync(arrayBuffer);
+            this.book = new ePub(arrayBuffer);
+            await this.book.ready;
+            const metadata = await this.book.loaded.metadata;
+            this.bookTitle.textContent = metadata.title || file.name.replace('.epub', '');
+            await this.renderToc();
+            this.showReader();
+            await this.displayChapter(0);
+        } catch (error) {
+            alert('无法解析 EPUB: ' + error.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    async loadEpubUrl(url) {
+        if (this.book) this.book.destroy();
+        this.showLoading('正在加载...');
+        try {
+            this.book = ePub(url);
+            await this.book.ready;
+            const metadata = await this.book.loaded.metadata;
+            this.bookTitle.textContent = metadata.title || 'EPUB Book';
+            await this.renderToc();
+            this.showReader();
+            await this.displayChapter(0);
+        } catch (error) {
+            alert('无法加载 EPUB: ' + error.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    async renderToc() {
+        this.tocList.innerHTML = '';
+        try {
+            const navigation = await this.book.loaded.navigation;
+            if (navigation.toc && navigation.toc.length > 0) {
+                navigation.toc.forEach((item, index) => {
+                    const li = document.createElement('li');
+                    li.className = 'toc-item';
+                    li.textContent = item.label;
+                    li.addEventListener('click', () => {
+                        this.goToChapter(index);
+                        if (window.innerWidth < 768) this.toggleSidebar();
+                    });
+                    this.tocList.appendChild(li);
+                });
+                return;
+            }
+        } catch (e) {}
+
+        const spineItems = Array.from(this.book.spine.items || []);
+        spineItems.forEach((item, index) => {
+            const li = document.createElement('li');
+            li.className = 'toc-item';
+            li.textContent = '章节 ' + (index + 1);
+            li.addEventListener('click', () => {
+                this.goToChapter(index);
+                if (window.innerWidth < 768) this.toggleSidebar();
+            });
+            this.tocList.appendChild(li);
+        });
+    }
+
+    showReader() {
+        this.welcome.classList.add('hidden');
+        this.reader.classList.add('active');
+    }
+
+    async displayChapter(index) {
+        if (!this.book) return;
+        try {
+            const items = Array.from(this.book.spine.items || []);
+            if (index >= 0 && index < items.length) {
+                this.currentChapter = index;
+                const item = items[index];
+                let html = await this.loadChapterFromZip(item.href);
+
+                if (!html) {
+                    this.content.innerHTML = '<p style="text-align:center;color:var(--text-secondary);">无法加载此章节内容</p>';
+                    return;
+                }
+
+                const fixedHtml = await this.fixRelativePaths(html, item.href);
+                const loadedHtml = await this.loadChapterResources(fixedHtml, item.href);
+                this.content.innerHTML = loadedHtml;
+
+                this.updateProgress();
+                this.updateTocActive();
+                this.contentArea.scrollTop = 0;
+            }
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    async loadChapterFromZip(href) {
+        if (!this.zip) return null;
+        try {
+            let path = href.replace(/^\.?\//, '').replace(/\\/g, '/');
+            let file = this.zip.file(path) || this.zip.file(decodeURIComponent(path)) || this.findFileInZip(path);
+            if (file) return await file.async('string');
+        } catch (error) {
+            console.error('Error loading chapter:', error);
+        }
+        return null;
+    }
+
+    async fixRelativePaths(html, currentHref) {
+        const baseDir = currentHref.substring(0, currentHref.lastIndexOf('/') + 1);
+        let result = html;
+
+        result = result.replace(/<img([^>]+)>/gi, (match, attrs) => {
+            const srcMatch = attrs.match(/src=["']([^"']+)["']/);
+            if (!srcMatch) return match;
+            const path = srcMatch[1];
+            if (path.startsWith('http:') || path.startsWith('https:') || path.startsWith('data:')) return match;
+            const fullPath = baseDir + path;
+            return `<img${attrs.replace(/src=["'][^"']*["']/, `src="" data-src="${fullPath}"`)}>`;
+        });
+
+        return result;
+    }
+
+    async loadChapterResources(html, currentHref) {
+        let result = html;
+        const imgRegex = /data-src="([^"]+)"/gi;
+        let match;
+        while ((match = imgRegex.exec(html)) !== null) {
+            const base64 = await this.loadResourceAsBase64(match[1]);
+            if (base64) {
+                result = result.replace(`data-src="${match[1]}"`, `src="${base64}"`);
+            } else {
+                result = result.replace(`data-src="${match[1]}"`, '');
+            }
+        }
+        return result;
+    }
+
+    async loadResourceAsBase64(resourcePath) {
+        if (this.resourceCache.has(resourcePath)) return this.resourceCache.get(resourcePath);
+        if (!this.zip) return null;
+
+        try {
+            const path = resourcePath.replace(/^\//, '').replace(/\\/g, '/');
+            const file = this.zip.file(path) || this.zip.file(decodeURIComponent(path)) || this.findFileInZip(path);
+            if (file) {
+                const content = await file.async('base64');
+                const mimeType = this.getMimeType(path);
+                const dataUrl = `data:${mimeType};base64,${content}`;
+                this.resourceCache.set(resourcePath, dataUrl);
+                return dataUrl;
+            }
+        } catch (error) {
+            console.warn('Failed to load resource:', resourcePath);
+        }
+        return null;
+    }
+
+    findFileInZip(searchPath) {
+        const normalized = searchPath.replace(/^\//, '').toLowerCase();
+        for (const filename of Object.keys(this.zip.files)) {
+            const fn = filename.toLowerCase().replace(/^\//, '').replace(/\\/g, '/');
+            if (fn.endsWith(normalized) || fn === normalized) return this.zip.files[filename];
+        }
+        return null;
+    }
+
+    getMimeType(path) {
+        const ext = path.split('.').pop().toLowerCase();
+        const types = {
+            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+            'gif': 'image/gif', 'svg': 'image/svg+xml', 'webp': 'image/webp'
+        };
+        return types[ext] || 'application/octet-stream';
+    }
+
+    updateProgress() {
+        const scrollTop = this.contentArea.scrollTop;
+        const scrollHeight = this.contentArea.scrollHeight - this.contentArea.clientHeight;
+        const progress = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 100;
+        this.progressBar.style.width = progress + '%';
+    }
+
+    updateTocActive() {
+        const items = this.tocList.querySelectorAll('.toc-item');
+        items.forEach((item, index) => {
+            item.classList.toggle('active', index === this.currentChapter);
+        });
+    }
+
+    prevPage() {
+        this.contentArea.scrollBy({ top: -300, behavior: 'smooth' });
+    }
+
+    nextPage() {
+        this.contentArea.scrollBy({ top: 300, behavior: 'smooth' });
+    }
+
+    goToChapter(index) {
+        this.displayChapter(index);
+    }
+
+    showLoading(message = '加载中...') {
+        this.loading.querySelector('p').textContent = message;
+        this.loading.classList.add('active');
+    }
+
+    hideLoading() {
+        this.loading.classList.remove('active');
+    }
+}
+
+new EpubReader();
+</script>
+</body>
+</html>
