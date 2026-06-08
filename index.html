@@ -568,9 +568,11 @@ class EpubReader {
         this.resourceCache = new Map();
         this.fontSize = 18;
         this.isDark = false;
+        this.currentBookKey = null;
         this.initElements();
         this.bindEvents();
         this.loadSettings();
+        this.renderRecentBooks();
     }
 
     initElements() {
@@ -618,6 +620,12 @@ class EpubReader {
 
         // 滚动更新进度
         this.contentArea.addEventListener('scroll', () => this.updateProgress());
+        // 节流保存进度
+        let saveTimeout;
+        this.contentArea.addEventListener('scroll', () => {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => this.saveReadingProgress(), 1000);
+        });
 
         // 键盘快捷键
         document.addEventListener('keydown', (e) => {
@@ -631,6 +639,175 @@ class EpubReader {
                 this.settingsPanel.classList.remove('active');
             }
         });
+    }
+
+    // ========== 阅读进度记忆 ==========
+    getBookKey(file) {
+        return 'epub_' + file.name + '_' + file.size;
+    }
+
+    saveReadingProgress() {
+        if (!this.currentBookKey) return;
+
+        const progress = {
+            chapter: this.currentChapter,
+            scrollTop: this.contentArea.scrollTop,
+            scrollHeight: this.contentArea.scrollHeight,
+            timestamp: Date.now()
+        };
+
+        // 保存当前书籍进度
+        localStorage.setItem(this.currentBookKey + '_progress', JSON.stringify(progress));
+
+        // 更新最近阅读列表
+        const recentBooks = this.getRecentBooks();
+        const bookIndex = recentBooks.findIndex(b => b.key === this.currentBookKey);
+        if (bookIndex !== -1) {
+            recentBooks.splice(bookIndex, 1);
+        }
+        recentBooks.unshift({
+            key: this.currentBookKey,
+            title: this.bookTitle.textContent,
+            progress: progress,
+            lastRead: Date.now()
+        });
+        // 只保留最近10本
+        if (recentBooks.length > 10) recentBooks.pop();
+        localStorage.setItem('epub_recent_books', JSON.stringify(recentBooks));
+    }
+
+    getRecentBooks() {
+        const saved = localStorage.getItem('epub_recent_books');
+        return saved ? JSON.parse(saved) : [];
+    }
+
+    getReadingProgress(bookKey) {
+        const saved = localStorage.getItem(bookKey + '_progress');
+        return saved ? JSON.parse(saved) : null;
+    }
+
+    renderRecentBooks() {
+        const recentBooks = this.getRecentBooks();
+        let recentSection = document.getElementById('recentBooks');
+
+        if (recentBooks.length === 0) return;
+
+        if (!recentSection) {
+            recentSection = document.createElement('div');
+            recentSection.id = 'recentBooks';
+            recentSection.className = 'recent-books';
+            document.querySelector('.welcome-actions').parentNode.insertBefore(recentSection, document.querySelector('.welcome-actions').nextSibling);
+
+            // 添加样式
+            const style = document.createElement('style');
+            style.textContent = `
+                .recent-books { margin-top: 32px; }
+                .recent-title { font-size: 14px; color: var(--text-secondary); margin-bottom: 16px; text-align: center; }
+                .recent-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; max-width: 500px; }
+                .recent-item {
+                    padding: 10px 16px;
+                    background: var(--bg-secondary);
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    font-size: 14px;
+                    color: var(--text-primary);
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    max-width: 200px;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .recent-item:hover { background: var(--bg-tertiary); border-color: var(--accent); }
+                .recent-item .progress { font-size: 12px; color: var(--text-light); margin-top: 4px; }
+            `;
+            document.head.appendChild(style);
+        }
+
+        recentSection.innerHTML = `
+            <div class="recent-title">最近阅读</div>
+            <div class="recent-list">
+                ${recentBooks.map(book => `
+                    <div class="recent-item" data-key="${book.key}" title="${book.title}">
+                        ${book.title}
+                        <div class="progress">第 ${(book.progress?.chapter || 0) + 1} 章</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        // 绑定点击事件
+        recentSection.querySelectorAll('.recent-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const key = item.dataset.key;
+                this.showLoading('正在恢复阅读进度...');
+                this.restoreFromRecent(key);
+            });
+        });
+    }
+
+    async restoreFromRecent(bookKey) {
+        // 获取文件信息
+        const recentBooks = this.getRecentBooks();
+        const bookInfo = recentBooks.find(b => b.key === bookKey);
+        if (!bookInfo) {
+            this.hideLoading();
+            alert('无法找到该书籍的本地文件');
+            return;
+        }
+
+        // 从 IndexedDB 恢复文件
+        const db = await this.openDB();
+        const tx = db.transaction('books', 'readonly');
+        const store = tx.objectStore('books');
+        const request = store.get(bookKey);
+
+        request.onsuccess = async () => {
+            if (request.result) {
+                const file = new File([request.result.blob], request.result.name, { type: 'application/epub+zip' });
+                await this.loadEpub(file, bookKey);
+                // 恢复到之前的进度
+                const progress = this.getReadingProgress(bookKey);
+                if (progress) {
+                    this.currentChapter = progress.chapter;
+                    await this.displayChapter(progress.chapter);
+                    // 等待内容渲染后恢复滚动位置
+                    setTimeout(() => {
+                        this.contentArea.scrollTop = progress.scrollTop;
+                    }, 100);
+                }
+            } else {
+                this.hideLoading();
+                alert('无法找到该书籍的本地文件，请重新打开');
+            }
+        };
+
+        request.onerror = () => {
+            this.hideLoading();
+            alert('无法恢复阅读进度，请重新打开书籍');
+        };
+    }
+
+    openDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open('EpubReaderDB', 1);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains('books')) {
+                    db.createObjectStore('books', { keyPath: 'key' });
+                }
+            };
+        });
+    }
+
+    async saveBookToIndexedDB(file, bookKey) {
+        const db = await this.openDB();
+        const tx = db.transaction('books', 'readwrite');
+        const store = tx.objectStore('books');
+        const blob = await file.arrayBuffer();
+        store.put({ key: bookKey, name: file.name, blob: new Blob([blob], { type: 'application/epub+zip' }) });
     }
 
     loadSettings() {
@@ -716,19 +893,41 @@ class EpubReader {
         }
     }
 
-    async loadEpub(file) {
+    async loadEpub(file, bookKey = null) {
         if (this.book) this.book.destroy();
         this.showLoading('正在解析...');
         try {
+            // 生成书籍唯一标识
+            this.currentBookKey = bookKey || this.getBookKey(file);
+
             const arrayBuffer = await file.arrayBuffer();
             this.zip = await JSZip.loadAsync(arrayBuffer);
             this.book = new ePub(arrayBuffer);
             await this.book.ready;
             const metadata = await this.book.loaded.metadata;
             this.bookTitle.textContent = metadata.title || file.name.replace('.epub', '');
+
+            // 保存书籍到 IndexedDB（用于下次恢复）
+            await this.saveBookToIndexedDB(file, this.currentBookKey);
+
+            // 渲染目录
             await this.renderToc();
             this.showReader();
-            await this.displayChapter(0);
+
+            // 检查是否有保存的进度
+            const savedProgress = this.getReadingProgress(this.currentBookKey);
+            const startChapter = savedProgress ? savedProgress.chapter : 0;
+            await this.displayChapter(startChapter);
+
+            // 如果有保存的滚动位置，恢复它
+            if (savedProgress) {
+                setTimeout(() => {
+                    this.contentArea.scrollTop = savedProgress.scrollTop;
+                }, 100);
+            }
+
+            // 更新最近阅读列表
+            this.renderRecentBooks();
         } catch (error) {
             alert('无法解析 EPUB: ' + error.message);
         } finally {
@@ -744,6 +943,8 @@ class EpubReader {
             await this.book.ready;
             const metadata = await this.book.loaded.metadata;
             this.bookTitle.textContent = metadata.title || 'EPUB Book';
+            // 在线书籍不使用进度记忆（无法唯一标识）
+            this.currentBookKey = null;
             await this.renderToc();
             this.showReader();
             await this.displayChapter(0);
